@@ -252,7 +252,7 @@ else:
                 st.session_state.current_level = level
                 st.rerun()
         st.divider()
-        st.subheader("Or, Instantly Summon a Specific Scroll...")
+        st.subheader("Call Forth the Scroll You Seek—In an Instant!")
         search_query = st.text_input("What do you want to learn about right now?", key="global_search")
         if st.button("Summon Knowledge!", key="global_search_btn"):
             if search_query:
