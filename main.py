@@ -15,9 +15,9 @@ if "api_key_configured" not in st.session_state:
     st.session_state.current_level = None
     st.session_state.feedback_dict = {}
     st.session_state.deep_dive_dict = {}
+    st.session_state.simpler_dict = {}
 
 # Set page config with a dynamic sidebar state based on login status.
-# This must be the first Streamlit command.
 st.set_page_config(
     page_title="The ML Dojo of Deep Study",
     page_icon="⛩️",
@@ -79,6 +79,11 @@ def linu_api_call(prompt):
     except Exception as e:
         return f"A demon lord is attacking the server, Master! My connection has been severed. Please ensure your API key is correct and has power. Error: {e}"
 
+def explain_it_simpler(section_content):
+    prompt = f"{LINU_PERSONA_PROMPT}\nYour Master finds this explanation too complex: \"{section_content}\". Re-explain it in the simplest possible terms, like you're talking to a complete beginner. Use a very simple analogy. Keep it short and sweet."
+    with st.spinner("Linu is crafting a simpler scroll..."):
+        return linu_api_call(prompt)
+
 def generate_lesson_content(topic_title):
     prompt = f"{LINU_PERSONA_PROMPT}\nYour Master selected: \"{topic_title}\". Generate a lesson. Structure with `[SECTION: ...]` tags. Each section needs a `[CODE]...[/CODE]` block and a simple, clear `[SPARRING_SESSION: ...]` challenge."
     with st.spinner(f"Linu is preparing the sparring grounds for {topic_title}..."):
@@ -106,55 +111,97 @@ def explain_term(term):
 # =================================================================================
 # 6. UI HELPER FUNCTIONS (The Rendering Engine)
 # =================================================================================
-def sanitize_markdown_headings(text):
-    def replace_heading(match):
-        title = match.group(2).strip()
-        return f"**{title}**"
-    return re.sub(r'^(#+)\s(.*)', replace_heading, text, flags=re.MULTILINE)
-
-def simple_render(content):
-    sanitized_content = sanitize_markdown_headings(content)
-    code_match = re.search(r'\[CODE\](.*?)\[/CODE\]', sanitized_content, re.DOTALL)
-    if code_match:
-        code, (before_code, after_code) = code_match.group(1).strip(), sanitized_content.split(code_match.group(0))
-        st.markdown(before_code); st.code(code, language="python"); st.markdown(after_code)
-    else:
-        st.markdown(sanitized_content)
-
-def render_content_block(content_block, topic_id, section_title, depth=0):
-    parts = re.split(r'(\[SPARRING_SESSION:.*?\])', content_block)
-    main_content = parts[0]
-    simple_render(main_content)
-    deep_dive_key = f"deep_dive_{topic_id}_{section_title.replace(' ', '_')}_{depth}"
-    if st.button("Go Deeper 🔮", key=f"btn_{deep_dive_key}"):
-        st.session_state.deep_dive_dict[deep_dive_key] = generate_deep_dive(section_title)
-    if deep_dive_key in st.session_state.deep_dive_dict:
-        with st.expander("Linu's Advanced Scroll", expanded=True):
-            render_structured_lesson(st.session_state.deep_dive_dict[deep_dive_key], topic_id, depth + 1)
-    if len(parts) > 1:
-        sparring_challenge = parts[1].replace('[SPARRING_SESSION:', '').replace(']', '').strip()
-        with st.container(border=True):
-            st.markdown(f"**🥊 Sparring Session: {section_title}**")
-            st.markdown(sparring_challenge)
-            challenge_key = f"spar_{topic_id}_{section_title.replace(' ', '_')}_{depth}"
-            user_answer = st.text_area("Your move, Master...", key=f"answer_{challenge_key}", height=75)
-            if st.button("Unleash Technique!", key=f"btn_{challenge_key}"):
-                with st.spinner("Linu is judging your form..."):
-                    if user_answer:
-                        st.session_state.feedback_dict[challenge_key] = check_user_answer(sparring_challenge, user_answer)
-                    else:
-                        st.session_state.feedback_dict[challenge_key] = "Master, you can't win a sparring match by doing nothing."
-            if challenge_key in st.session_state.feedback_dict:
-                st.info(st.session_state.feedback_dict[challenge_key])
-
 def render_structured_lesson(content, topic_id, depth=0):
-    parts = re.split(r'(\[SECTION:.*?\])', content)
-    if not parts[0].isspace(): render_content_block(parts[0], topic_id, "intro", depth)
-    for i in range(1, len(parts), 2):
-        title = parts[i].replace('[SECTION:', '').replace(']', '').strip()
-        body = parts[i+1]
-        st.divider(); st.subheader(title)
-        render_content_block(body, topic_id, title, depth)
+    # Clean up the "undefined" artifact that might appear at the start or on its own line
+    cleaned_content = re.sub(r'^\s*undefined\s*$', '', content, flags=re.MULTILINE).strip()
+    
+    sections = re.split(r'(\[SECTION:.*?\])', cleaned_content)
+    
+    # Handle potential intro text before the first section
+    if sections and sections[0].strip():
+        st.markdown(sections[0].strip())
+        st.divider()
+
+    # Process each section
+    for i in range(1, len(sections), 2):
+        section_key = f"{topic_id}_{i}_{depth}"
+        title = sections[i].replace('[SECTION:', '').replace(']', '').strip()
+        body = sections[i+1].strip()
+
+        with st.container(border=True):
+            if title: st.subheader(title)
+
+            # Parse the body for its parts
+            text_parts = re.split(r'(\[CODE\].*?\[/CODE\]|\[SPARRING_SESSION:.*?\])', body, flags=re.DOTALL)
+            
+            main_text_content = ""
+            code_block = None
+            sparring_challenge = None
+
+            for part in text_parts:
+                if part.startswith('[CODE]'):
+                    code_block = part.replace('[CODE]', '').replace('[/CODE]', '').strip()
+                elif part.startswith('[SPARRING_SESSION:'):
+                    sparring_challenge = part.replace('[SPARRING_SESSION:', '').replace(']', '').strip()
+                else:
+                    main_text_content += part
+
+            # Render the main text
+            if main_text_content.strip():
+                st.markdown(main_text_content.strip())
+
+            # Render the code block if it exists
+            if code_block:
+                st.code(code_block, language="python")
+
+            # Action buttons and their logic
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            
+            # Define keys for session state
+            simpler_key = f"simpler_{section_key}"
+            deep_dive_key = f"deep_dive_{section_key}"
+            
+            with col1:
+                if st.button("Explain It Simpler 📜", key=f"btn_{simpler_key}", use_container_width=True):
+                    context_to_simplify = main_text_content
+                    if code_block:
+                        context_to_simplify += f"\n\nHere is the related code:\n```python\n{code_block}\n```"
+                    st.session_state[simpler_key] = explain_it_simpler(context_to_simplify)
+            
+            with col2:
+                if st.button("Go Deeper 🔮", key=f"btn_{deep_dive_key}", use_container_width=True):
+                    st.session_state[deep_dive_key] = generate_deep_dive(title)
+            
+            # --- FIXED LOGIC: Display generated content independently ---
+            # This logic now correctly displays both "simpler" and "deep dive" content if both exist.
+            
+            # Check for and display simpler explanation
+            if simpler_key in st.session_state and st.session_state[simpler_key]:
+                st.info(st.session_state[simpler_key])
+
+            # Check for and display deep dive content
+            if deep_dive_key in st.session_state and st.session_state[deep_dive_key]:
+                with st.expander("Linu's Advanced Scroll", expanded=True):
+                    render_structured_lesson(st.session_state[deep_dive_key], topic_id, depth + 1)
+            # --- End of Fix ---
+
+            # Render sparring session at the end
+            if sparring_challenge:
+                st.markdown("---")
+                st.markdown(f"**🥊 Sparring Session: {title}**")
+                st.markdown(sparring_challenge)
+                
+                challenge_key = f"spar_{section_key}"
+                user_answer = st.text_area("Your move, Master...", key=f"answer_{challenge_key}", height=75)
+                
+                if st.button("Unleash Technique!", key=f"btn_{challenge_key}", use_container_width=True):
+                    with st.spinner("Linu is judging your form..."):
+                        feedback = check_user_answer(sparring_challenge, user_answer) if user_answer else "Master, you can't win a sparring match by doing nothing."
+                        st.session_state[challenge_key] = feedback
+                
+                if challenge_key in st.session_state:
+                    st.success(st.session_state[challenge_key])
 
 def render_theme_selection():
     level = st.session_state.current_level
@@ -168,17 +215,15 @@ def render_theme_selection():
                 if st.button(topic["title"], key=topic["id"], use_container_width=True):
                     st.session_state.current_topic_id = topic["id"]
                     st.session_state.current_topic_title = topic["title"]
+                    # Reset lesson-specific content for the new topic
                     st.session_state.lesson_content = None
-                    st.session_state.feedback_dict = {}
-                    st.session_state.deep_dive_dict = {}
+                    # Clear old dynamic keys by simply letting them be overwritten or ignored
                     st.rerun()
 
 # =================================================================================
 # 7. MAIN APP LOGIC (The Grand Archives' Core Loop)
 # =================================================================================
 
-# --- SIDEBAR LOGIC ---
-# The sidebar is only populated if the user is logged in.
 if st.session_state.api_key_configured:
     with st.sidebar:
         st.title("⛩️ ML Dojo")
@@ -188,34 +233,26 @@ if st.session_state.api_key_configured:
             st.session_state.current_topic_id = None
             st.session_state.current_topic_title = None
             st.session_state.lesson_content = None
-            st.session_state.feedback_dict = {}
-            st.session_state.deep_dive_dict = {}
             st.rerun()
         if st.session_state.get("current_topic_title"):
             if st.button("⬅️ Back to Theme Selection"):
                 st.session_state.current_topic_id = None
                 st.session_state.current_topic_title = None
                 st.session_state.lesson_content = None
-                st.session_state.feedback_dict = {}
-                st.session_state.deep_dive_dict = {}
                 st.rerun()
         st.divider()
         st.header("🤖 Linu's Toolbox")
         query = st.text_input("Ask about a specific term:", label_visibility="collapsed", key="term_query")
         if st.button("Ask Linu"):
-            if query:
-                st.info(explain_term(query))
-            else:
-                st.warning("An empty query? Are you testing my patience, Master?")
+            if query: st.info(explain_term(query))
+            else: st.warning("An empty query? Are you testing my patience, Master?")
         st.divider()
         if st.button("🔑 Logout / Reset Key"):
-            for key in st.session_state.keys():
+            for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
 
-# --- MAIN PAGE RENDER ---
 if not st.session_state.api_key_configured:
-    # API Key Entry Page
     col1, col2 = st.columns([1.5, 2], gap="large")
     with col1:
         st.markdown("<h1 style='text-align: center;'>⛩️ The Grand Dojo Awaits</h1>", unsafe_allow_html=True)
@@ -235,14 +272,13 @@ if not st.session_state.api_key_configured:
                 st.warning("You must provide a key to break the seal, Master.")
     with col2:
         with st.container(border=True):
-            st.markdown("<h3 style='text-align: center;'>Don't have a Gemini API key yet?</h3>", unsafe_allow_html=True)
-            st.markdown("<p style='text-align: center;'>No worries — it's quick and easy to get one! Here's a simple step-by-step guide to help you generate your free Google API key.</p>", unsafe_allow_html=True)
+            st.markdown("<h3 style='text-align: center;'>📜 The Summoning Scroll 📜</h3>", unsafe_allow_html=True)
+            st.markdown("Don't possess a key? Fear not! You can forge one in the digital mountains of Google AI Studio. This ancient scroll (video) will guide your path.")
             st.video("https://www.youtube.com/watch?v=6BRyynZkvf0")
             st.markdown("---")
             st.markdown("<p style='text-align: center;'>Ready to begin your quest?</p>", unsafe_allow_html=True)
             st.link_button("Forge Your Key at Google AI Studio", "https://aistudio.google.com/app/apikey", use_container_width=True)
 else:
-    # Main App Logic (after successful login)
     if st.session_state.get("current_level") is None:
         st.title("Choose Your Destiny, Master!")
         levels = ["Beginner 🌱", "Intermediate 🚀", "Professional 🏆"]
@@ -252,7 +288,7 @@ else:
                 st.session_state.current_level = level
                 st.rerun()
         st.divider()
-        st.subheader("Call Forth the Scroll You Seek—In an Instant!")
+        st.subheader("Or, Instantly Summon a Specific Scroll...")
         search_query = st.text_input("What do you want to learn about right now?", key="global_search")
         if st.button("Summon Knowledge!", key="global_search_btn"):
             if search_query:
@@ -273,7 +309,11 @@ else:
                 st.session_state.lesson_content = generate_standalone_lesson(topic_title)
             else:
                 st.session_state.lesson_content = generate_lesson_content(topic_title)
-        render_structured_lesson(st.session_state.lesson_content, topic_id, depth=0)
+        if st.session_state.get("lesson_content"):
+            render_structured_lesson(st.session_state.lesson_content, topic_id)
+        else:
+            st.error("Linu is having trouble summoning this scroll, Master. Please try again.")
+
         st.divider()
         if st.session_state.current_level != "Search":
             current_theme_topics = []
@@ -292,6 +332,4 @@ else:
                     st.session_state.current_topic_id = next_topic['id']
                     st.session_state.current_topic_title = next_topic['title']
                     st.session_state.lesson_content = None
-                    st.session_state.feedback_dict = {}
-                    st.session_state.deep_dive_dict = {}
                     st.rerun()
